@@ -3,7 +3,12 @@ import { ref, computed } from 'vue';
 import type { CanFrame, DbcMessage, BusStats } from '../types';
 import { parseDbc, decodeCanFrame, DEFAULT_DBC_CONTENT } from '../utils/dbc-parser';
 
-let frameIdCounter = 0;
+// Monotonic unique identifier — never reset, so ids are never reused
+// (reusing ids across a clear would make a lingering panel selection
+// point at an unrelated new frame).
+let frameUid = 0;
+// Display numbering within the current buffer; restarts from 1 on clear.
+let frameSeq = 0;
 
 export const useCanBusStore = defineStore('canbus', () => {
   const frames = ref<CanFrame[]>([]);
@@ -95,7 +100,7 @@ export const useCanBusStore = defineStore('canbus', () => {
       busLoad: 0,
       lastUpdate: Date.now()
     };
-    frameIdCounter = 0;
+    frameSeq = 0;
   }
 
   function loadMockDbc() {
@@ -111,8 +116,6 @@ export const useCanBusStore = defineStore('canbus', () => {
     const arbId = messageIds.length > 0
       ? messageIds[Math.floor(Math.random() * messageIds.length)]
       : 0x7DF;
-
-    const msgDef = dbcMessages.value.get(arbId);
 
     // Generate realistic OBD-II values
     const rpm = Math.floor(800 + Math.random() * 5200);
@@ -134,7 +137,8 @@ export const useCanBusStore = defineStore('canbus', () => {
     const dataHex = dataBytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
 
     const frame: CanFrame = {
-      id: `frame-${++frameIdCounter}`,
+      id: `frame-${++frameUid}`,
+      seq: ++frameSeq,
       timestamp: Date.now(),
       arbitrationId: arbId,
       dlc: 8,
@@ -143,15 +147,8 @@ export const useCanBusStore = defineStore('canbus', () => {
       direction: Math.random() > 0.3 ? 'RX' : 'TX'
     };
 
-    if (msgDef) {
-      frame.decoded = {
-        EngineRPM: rpm,
-        VehicleSpeed: speed,
-        CoolantTemp: temp,
-        ThrottlePosition: throttle,
-        EngineLoad: load
-      };
-    }
+    // decoded is filled by addFrame() via decodeCanFrame, so the table,
+    // detail panel and chart always read the same values as the API data.
 
     return frame;
   }

@@ -23,17 +23,20 @@ function formatHexId(id: number): string {
   return '0x' + id.toString(16).toUpperCase().padStart(3, '0');
 }
 
-function getSignalPercent(name: string, value: number): number {
-  const ranges: Record<string, { min: number; max: number }> = {
-    EngineRPM: { min: 0, max: 16383 },
-    VehicleSpeed: { min: 0, max: 255 },
-    CoolantTemp: { min: -40, max: 215 },
-    ThrottlePosition: { min: 0, max: 100 },
-    EngineLoad: { min: 0, max: 100 }
-  };
-  const range = ranges[name];
-  if (!range) return 50;
-  return Math.max(0, Math.min(100, ((value - range.min) / (range.max - range.min)) * 100));
+function getSignalMeta(arbId: number, name: string) {
+  return store.dbcMessages.get(arbId)?.signals.find(s => s.name === name);
+}
+
+function getSignalPercent(arbId: number, name: string, value: number): number {
+  const sig = getSignalMeta(arbId, name);
+  if (!sig || sig.maxValue === sig.minValue) return 50;
+  return Math.max(0, Math.min(100, ((value - sig.minValue) / (sig.maxValue - sig.minValue)) * 100));
+}
+
+function isSignalOutOfRange(arbId: number, name: string, value: number): boolean {
+  const sig = getSignalMeta(arbId, name);
+  if (!sig) return false;
+  return value < sig.minValue || value > sig.maxValue;
 }
 
 function getSignalColor(name: string): string {
@@ -47,7 +50,9 @@ function getSignalColor(name: string): string {
   return colors[name] || 'bg-cyan-500';
 }
 
-function getSignalUnit(name: string): string {
+function getSignalUnit(arbId: number, name: string): string {
+  const sig = getSignalMeta(arbId, name);
+  if (sig) return sig.unit;
   const units: Record<string, string> = {
     EngineRPM: 'rpm',
     VehicleSpeed: 'km/h',
@@ -152,26 +157,51 @@ function getSignalUnit(name: string): string {
     >
       <h3 class="text-sm font-semibold text-gray-300 mb-3">
         帧详情 — {{ formatHexId(selectedFrame.arbitrationId) }}
-        <span class="text-gray-500 font-normal ml-2">{{ selectedFrame.id }}</span>
+        <span class="text-gray-500 font-normal ml-2">#{{ selectedFrame.seq }}</span>
       </h3>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div
           v-for="(value, name) in selectedFrame.decoded"
           :key="String(name)"
           class="bg-gray-800 rounded-lg p-3"
+          :class="isSignalOutOfRange(selectedFrame.arbitrationId, String(name), value as number)
+            ? 'ring-1 ring-red-500/70'
+            : ''"
         >
           <div class="flex justify-between items-center mb-1.5">
-            <span class="text-sm text-gray-400">{{ name }}</span>
-            <span class="text-sm font-bold text-gray-100">
-              {{ typeof value === 'number' ? value.toFixed(1) : value }} {{ getSignalUnit(String(name)) }}
+            <span class="text-sm text-gray-400 flex items-center gap-1.5">
+              {{ name }}
+              <span
+                v-if="isSignalOutOfRange(selectedFrame.arbitrationId, String(name), value as number)"
+                class="px-1 py-px rounded text-[10px] font-bold bg-red-900/60 text-red-300"
+              >
+                越界
+              </span>
+            </span>
+            <span class="text-sm font-bold"
+              :class="isSignalOutOfRange(selectedFrame.arbitrationId, String(name), value as number)
+                ? 'text-red-300'
+                : 'text-gray-100'"
+            >
+              {{ typeof value === 'number' ? value.toFixed(1) : value }} {{ getSignalUnit(selectedFrame.arbitrationId, String(name)) }}
             </span>
           </div>
           <div class="w-full bg-gray-700 rounded-full h-2">
             <div
               class="h-2 rounded-full transition-all duration-300"
-              :class="getSignalColor(String(name))"
-              :style="{ width: getSignalPercent(String(name), value as number) + '%' }"
+              :class="isSignalOutOfRange(selectedFrame.arbitrationId, String(name), value as number)
+                ? 'bg-red-500'
+                : getSignalColor(String(name))"
+              :style="{ width: getSignalPercent(selectedFrame.arbitrationId, String(name), value as number) + '%' }"
             ></div>
+          </div>
+          <div
+            v-if="getSignalMeta(selectedFrame.arbitrationId, String(name))"
+            class="mt-1 text-[10px] text-gray-500"
+          >
+            量程: {{ getSignalMeta(selectedFrame.arbitrationId, String(name))!.minValue }} ~
+            {{ getSignalMeta(selectedFrame.arbitrationId, String(name))!.maxValue }}
+            {{ getSignalMeta(selectedFrame.arbitrationId, String(name))!.unit }}
           </div>
         </div>
       </div>

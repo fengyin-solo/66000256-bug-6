@@ -1,5 +1,6 @@
 export interface CanFrame {
   id: string;
+  seq: number;
   timestamp: number;
   arbitrationId: number;
   dlc: number;
