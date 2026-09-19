@@ -13,6 +13,16 @@ export const useCanBusStore = defineStore('canbus', () => {
   const filterText = ref('');
   const isCapturing = ref(false);
   const pollInterval = ref<number | null>(null);
+  const selectedFrameId = ref<string | null>(null);
+
+  const selectedFrame = computed(() => {
+    if (!selectedFrameId.value) return null;
+    return frames.value.find(f => f.id === selectedFrameId.value) || null;
+  });
+
+  function selectFrame(id: string) {
+    selectedFrameId.value = selectedFrameId.value === id ? null : id;
+  }
 
   const busStats = ref<BusStats>({
     totalFrames: 0,
@@ -55,7 +65,11 @@ export const useCanBusStore = defineStore('canbus', () => {
   function addFrame(frame: CanFrame) {
     frames.value.push(frame);
     if (frames.value.length > 500) {
-      frames.value = frames.value.slice(-500);
+      const trimmed = frames.value.slice(-500);
+      if (selectedFrameId.value && !trimmed.some(f => f.id === selectedFrameId.value)) {
+        selectedFrameId.value = null;
+      }
+      frames.value = trimmed;
     }
 
     busStats.value.totalFrames++;
@@ -87,6 +101,7 @@ export const useCanBusStore = defineStore('canbus', () => {
   function clearFrames() {
     frames.value = [];
     signals.value = new Map();
+    selectedFrameId.value = null;
     busStats.value = {
       totalFrames: 0,
       rxCount: 0,
@@ -204,10 +219,13 @@ export const useCanBusStore = defineStore('canbus', () => {
     filterText,
     busStats,
     isCapturing,
+    selectedFrameId,
+    selectedFrame,
     filteredFrames,
     busLoadPercent,
     addFrame,
     clearFrames,
+    selectFrame,
     loadMockDbc,
     parseAndLoadDbc,
     startCapture,

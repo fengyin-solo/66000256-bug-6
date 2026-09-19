@@ -1,17 +1,37 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { computed } from 'vue';
 import { useCanBusStore } from '../store/canbus';
+import type { DbcSignal } from '../types';
 
 const store = useCanBusStore();
-const selectedFrameId = ref<string | null>(null);
 
-const selectedFrame = computed(() => {
-  if (!selectedFrameId.value) return null;
-  return store.frames.find(f => f.id === selectedFrameId.value) || null;
+const FALLBACK_RANGES: Record<string, { min: number; max: number }> = {
+  EngineRPM: { min: 0, max: 16383 },
+  VehicleSpeed: { min: 0, max: 255 },
+  CoolantTemp: { min: -40, max: 215 },
+  ThrottlePosition: { min: 0, max: 100 },
+  EngineLoad: { min: 0, max: 100 }
+};
+
+const selectedMessage = computed(() => {
+  const frame = store.selectedFrame;
+  return frame ? store.dbcMessages.get(frame.arbitrationId) : undefined;
 });
 
-function selectFrame(id: string) {
-  selectedFrameId.value = selectedFrameId.value === id ? null : id;
+function getSignalDef(name: string): DbcSignal | undefined {
+  return selectedMessage.value?.signals.find(s => s.name === name);
+}
+
+function getSignalRange(name: string): { min: number; max: number } {
+  const sig = getSignalDef(name);
+  if (sig) return { min: sig.minValue, max: sig.maxValue };
+  return FALLBACK_RANGES[name] || { min: 0, max: 100 };
+}
+
+function isOutOfRange(name: string, value: number): boolean {
+  const sig = getSignalDef(name);
+  if (!sig) return false;
+  return value < sig.minValue || value > sig.maxValue;
 }
 
 function formatTimestamp(ts: number): string {
@@ -24,19 +44,13 @@ function formatHexId(id: number): string {
 }
 
 function getSignalPercent(name: string, value: number): number {
-  const ranges: Record<string, { min: number; max: number }> = {
-    EngineRPM: { min: 0, max: 16383 },
-    VehicleSpeed: { min: 0, max: 255 },
-    CoolantTemp: { min: -40, max: 215 },
-    ThrottlePosition: { min: 0, max: 100 },
-    EngineLoad: { min: 0, max: 100 }
-  };
-  const range = ranges[name];
-  if (!range) return 50;
+  const range = getSignalRange(name);
+  if (range.max === range.min) return 50;
   return Math.max(0, Math.min(100, ((value - range.min) / (range.max - range.min)) * 100));
 }
 
-function getSignalColor(name: string): string {
+function getSignalColor(name: string, value?: number): string {
+  if (value !== undefined && isOutOfRange(String(name), value)) return 'bg-red-500';
   const colors: Record<string, string> = {
     EngineRPM: 'bg-blue-500',
     VehicleSpeed: 'bg-green-500',
@@ -48,6 +62,8 @@ function getSignalColor(name: string): string {
 }
 
 function getSignalUnit(name: string): string {
+  const sig = getSignalDef(name);
+  if (sig?.unit) return sig.unit;
   const units: Record<string, string> = {
     EngineRPM: 'rpm',
     VehicleSpeed: 'km/h',
@@ -108,10 +124,10 @@ function getSignalUnit(name: string): string {
           <tr
             v-for="frame in store.filteredFrames"
             :key="frame.id"
-            @click="selectFrame(frame.id)"
+            @click="store.selectFrame(frame.id)"
             class="border-b border-gray-800 cursor-pointer transition-colors"
             :class="[
-              selectedFrameId === frame.id
+              store.selectedFrameId === frame.id
                 ? 'bg-cyan-900/30 border-l-2 border-l-cyan-500'
                 : 'hover:bg-gray-800/50'
             ]"
@@ -146,36 +162,50 @@ function getSignalUnit(name: string): string {
 
     <!-- Detail Panel -->
     <div
-      v-if="selectedFrame"
+      v-if="store.selectedFrame"
       class="border-t border-gray-700 bg-gray-850 p-4"
       style="background-color: #1a2234;"
     >
       <h3 class="text-sm font-semibold text-gray-300 mb-3">
-        帧详情 — {{ formatHexId(selectedFrame.arbitrationId) }}
-        <span class="text-gray-500 font-normal ml-2">{{ selectedFrame.id }}</span>
+        帧详情 — {{ formatHexId(store.selectedFrame.arbitrationId) }}
+        <span class="text-gray-500 font-normal ml-2">{{ store.selectedFrame.id }}</span>
       </h3>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div
-          v-for="(value, name) in selectedFrame.decoded"
+          v-for="(value, name) in store.selectedFrame.decoded"
           :key="String(name)"
           class="bg-gray-800 rounded-lg p-3"
         >
           <div class="flex justify-between items-center mb-1.5">
-            <span class="text-sm text-gray-400">{{ name }}</span>
-            <span class="text-sm font-bold text-gray-100">
+            <span class="text-sm text-gray-400">
+              {{ name }}
+              <span
+                v-if="isOutOfRange(String(name), value as number)"
+                class="ml-1 px-1 py-0.5 rounded text-[10px] font-bold bg-red-900/60 text-red-300 align-middle"
+              >
+                越界
+              </span>
+            </span>
+            <span
+              class="text-sm font-bold"
+              :class="isOutOfRange(String(name), value as number) ? 'text-red-300' : 'text-gray-100'"
+            >
               {{ typeof value === 'number' ? value.toFixed(1) : value }} {{ getSignalUnit(String(name)) }}
             </span>
           </div>
           <div class="w-full bg-gray-700 rounded-full h-2">
             <div
               class="h-2 rounded-full transition-all duration-300"
-              :class="getSignalColor(String(name))"
+              :class="getSignalColor(String(name), value as number)"
               :style="{ width: getSignalPercent(String(name), value as number) + '%' }"
             ></div>
           </div>
+          <div v-if="getSignalDef(String(name))" class="mt-1 text-[10px] text-gray-500 font-mono">
+            量程: {{ getSignalRange(String(name)).min }} ~ {{ getSignalRange(String(name)).max }} {{ getSignalUnit(String(name)) }}
+          </div>
         </div>
       </div>
-      <div v-if="Object.keys(selectedFrame.decoded).length === 0" class="text-gray-500 text-sm">
+      <div v-if="Object.keys(store.selectedFrame.decoded).length === 0" class="text-gray-500 text-sm">
         无DBC定义 — 无法解码此帧信号
       </div>
     </div>
